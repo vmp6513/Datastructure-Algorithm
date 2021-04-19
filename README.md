@@ -1,6 +1,6 @@
-## c++:
+## c++
 STL, template, smart_pointer...
-## data_structure: 
+## data_structure
 list, hash...
-## algorightm:
+## algorightm
 sort, string operation, dynamic programming... 

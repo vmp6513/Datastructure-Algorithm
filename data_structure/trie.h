@@ -38,7 +38,6 @@ class Trie {
             if (node->children[ch] == nullptr) return nullptr;
             node = node->children[ch];
         }
-        return node;
-        
+        return node;  
     }
 };

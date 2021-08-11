@@ -1,17 +1,20 @@
-#include <errno.h>
-#include <pthread.h>    //thread
-#include <semaphore.h>  //thread sem
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/msg.h>  //ipc msg queue
-#include <sys/sem.h>  //ipc sem
-#include <sys/shm.h>  //ipc shared mem
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
+class QueueFull : public std::exception {
+   public:
+    QueueFull(const std::string &msg = "The queue is full\n") : _msg(msg) {}
+    const char *what() const noexcept { return _msg.c_str(); }
 
-#include <deque>
-#include <exception>
+   private:
+    std::string _msg;
+};
+
+class QueueEmpty : public std::exception {
+   public:
+    QueueEmpty(const std::string &msg = "The queue is empty\n") : _msg(msg) {}
+    const char *what() const noexcept { return _msg.c_str(); }
+
+   private:
+    std::string _msg;
+};
 
 class Lock {
    public:
@@ -19,8 +22,6 @@ class Lock {
         pthread_mutexattr_init(&_mutexattr);
         // 跨进程共享
         pthread_mutexattr_setpshared(&_mutexattr, PTHREAD_PROCESS_SHARED);
-        // 嵌套锁
-        pthread_mutexattr_settype(&_mutexattr, PTHREAD_MUTEX_RECURSIVE);
         pthread_mutex_init(&_mutex, &_mutexattr);
     }
     ~Lock() {
@@ -32,6 +33,8 @@ class Lock {
     pthread_mutex_t *get() { return &_mutex; }
 
    private:
+    Lock(const Lock &lock) {}
+    Lock operator=(const Lock &lock) {}
     pthread_mutex_t _mutex;
     pthread_mutexattr_t _mutexattr;
 };
@@ -39,27 +42,32 @@ class Lock {
 class Condition {
    public:
     Condition() {}
+
     Condition(Lock &mutex) {
         pthread_cond_init(&_cond, NULL);
-        _mutex = mutex;
+        _mutex = mutex.get();
     }
     ~Condition() { pthread_cond_destroy(&_cond); }
 
     void wait() {
-        pthread_mutex_lock(_mutex.get());
-        pthread_cond_wait(&_cond, _mutex.get());
-        pthread_mutex_unlock(_mutex.get());
+        // =0 表示之前没有获取互斥锁, 记得后续要释放一次
+        if (0 == pthread_mutex_trylock(_mutex)) {
+            throw std::runtime_error("Cannot wait on un-acquired lock");
+        } else {
+            pthread_mutex_unlock(_mutex);
+        }
+        pthread_cond_wait(&_cond, _mutex);
     }
 
     void notify() { pthread_cond_signal(&_cond); }
 
-    void acquire() { pthread_mutex_lock(_mutex.get()); }
+    void acquire() { pthread_mutex_lock(_mutex); }
 
-    void release() { pthread_mutex_unlock(_mutex.get()); }
+    void release() { pthread_mutex_unlock(_mutex); }
 
    private:
     pthread_cond_t _cond;
-    Lock _mutex;
+    pthread_mutex_t *_mutex;
 };
 
 // 线程安全队列
@@ -88,18 +96,23 @@ class Queue {
     ~Queue() {}
     void task_done();
     void join();
-    size_t size();
+    size_t size() {
+        mutex.acquire();
+        size_t cur_size = _qsize();
+        mutex.release();
+        return cur_size;
+    }
     bool empty();
     bool full();
 
     void put(void *item, bool block = true, int timeout = 0) {
         not_full.acquire();
 
-        // TODO: 非阻塞
+        // 非阻塞
         if (!block) {
             if (_qsize() >= maxsize) {
-                errno = EAGAIN;
-                return;
+                not_full.release();
+                throw QueueFull();
             }
         }
         // 阻塞
@@ -125,12 +138,11 @@ class Queue {
     }
     void *get(bool block = true, int timeout = 0) {
         not_empty.acquire();
-
-        // TODO: 非阻塞
+        // 非阻塞
         if (!block) {
             if (_qsize() <= 0) {
-                errno = EAGAIN;
-                return NULL;
+                not_empty.release();
+                throw QueueEmpty();
             }
         }
         // 阻塞
@@ -156,41 +168,3 @@ class Queue {
         return item;
     }
 };
-
-void *consume(void *arg) {
-    Queue *queue = (Queue *)arg;
-    printf("[consumer:%ld] ready to consume...\n", pthread_self());
-
-    while (true) {
-        int *item;
-        item = (int *)(queue->get(true));
-        printf("[consumer:%ld] get a item %d\n", pthread_self(), *item);
-    }
-}
-
-void *produce(void *arg) {
-    Queue *queue = (Queue *)arg;
-    printf("[producer:%ld] ready to produce...\n", pthread_self());
-
-    while (true) {
-        int *item = (int *)malloc(sizeof(int));
-        *item = rand() % 100;
-        queue->put(item, true);
-        printf("[producer:%ld] put a item %d\n", pthread_self(), *item);
-    }
-}
-
-int main(int argc, char *argv[]) {
-    Queue queue(3);
-
-    pthread_t consumer;
-    pthread_t producer;
-
-    pthread_create(&consumer, NULL, consume, &queue);
-    pthread_create(&producer, NULL, produce, &queue);
-
-    pthread_join(consumer, NULL);
-    pthread_join(producer, NULL);
-
-    return 0;
-}

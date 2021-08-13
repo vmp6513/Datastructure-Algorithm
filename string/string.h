@@ -1,4 +1,6 @@
-#include <bits/stdc++.h>
+#include <vector>
+#include <string>
+
 using namespace std;
 
 // 字符串分割函数

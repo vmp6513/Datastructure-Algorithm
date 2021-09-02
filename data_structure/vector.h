@@ -40,7 +40,7 @@ class vector {
         }
         m_data[m_size] = val;
         m_size++;
-    } 
+    }
     void pop_back() {
         if (m_size == 0) {
             throw std::exception();

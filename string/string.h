@@ -42,7 +42,7 @@ void* memcpy(void* dest, const void* src, size_t count) {
 
 char* strcpy(char* dst, const char* src) {
     char* p = NULL;
-    if(dst == NULL || src == NULL) 
+    if(dst == NULL || src == NULL)
         return NULL;
 
     p = dst;
